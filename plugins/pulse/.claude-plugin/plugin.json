@@ -1,0 +1,9 @@
+{
+  "name": "pulse",
+  "version": "1.0.0",
+  "description": "PULSE — Business Intelligence Reporter for Big Uppetite. Reads Trello boards, analyses project health, and generates clear actionable reports for the team and clients.",
+  "author": {
+    "name": "Big Uppetite"
+  },
+  "keywords": ["trello", "fireflies", "reporting", "risk-radar", "consulting", "business-intelligence"]
+}

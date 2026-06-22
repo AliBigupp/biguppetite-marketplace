@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-plugins-community/main/.claude-plugin/marketplace-schema.json",
+  "name": "biguppetite",
+  "description": "Big Uppetite internal tools — ATLAS project intelligence and PULSE business reporting.",
+  "owner": {
+    "name": "Big Uppetite",
+    "email": "ali@biguppetite.com"
+  },
+  "metadata": {
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "atlas",
+      "displayName": "ATLAS — Intelligent Project Builder",
+      "source": "./atlas",
+      "description": "Processes Fireflies meeting transcripts, manages Trello boards, maintains client tone profiles, and keeps 12-week client programmes on track.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Big Uppetite"
+      },
+      "keywords": ["trello", "fireflies", "project-management", "consulting", "meeting-processor"],
+      "category": "productivity"
+    },
+    {
+      "name": "pulse",
+      "displayName": "PULSE — Business Intelligence Reporter",
+      "source": "./pulse",
+      "description": "Reads Trello boards, analyses project health, and generates clear actionable reports for the team and clients.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Big Uppetite"
+      },
+      "keywords": ["trello", "reporting", "risk-radar", "consulting", "business-intelligence"],
+      "category": "productivity"
+    }
+  ]
+}

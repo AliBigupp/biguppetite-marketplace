@@ -1,0 +1,9 @@
+{
+  "name": "atlas",
+  "version": "0.1.0",
+  "description": "ATLAS — Intelligent Project Builder for Big Uppetite. Processes Fireflies meeting transcripts, manages Trello boards, maintains client tone profiles, and keeps 12-week programmes on track.",
+  "author": {
+    "name": "Big Uppetite"
+  },
+  "keywords": ["trello", "fireflies", "project-management", "consulting", "meeting-processor"]
+}
