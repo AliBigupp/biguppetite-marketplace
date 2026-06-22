@@ -6,14 +6,11 @@
     "name": "Big Uppetite",
     "email": "ali@biguppetite.com"
   },
-  "metadata": {
-    "pluginRoot": "./plugins"
-  },
   "plugins": [
     {
       "name": "atlas",
       "displayName": "ATLAS — Intelligent Project Builder",
-      "source": "atlas",
+      "source": "./plugins/atlas",
       "description": "Processes Fireflies meeting transcripts, manages Trello boards, maintains client tone profiles, and keeps 12-week client programmes on track.",
       "version": "0.1.0",
       "author": {
@@ -25,7 +22,7 @@
     {
       "name": "pulse",
       "displayName": "PULSE — Business Intelligence Reporter",
-      "source": "pulse",
+      "source": "./plugins/pulse",
       "description": "Reads Trello boards, analyses project health, and generates clear actionable reports for the team and clients.",
       "version": "1.0.0",
       "author": {
