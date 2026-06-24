@@ -105,8 +105,8 @@ PULSE reads outputs ──► Daily Focus for team
 
 | Agent | Current Version | Status |
 |---|---|---|
-| ATLAS | 0.6.0 | Active |
-| PULSE | 3.0.0 | Active |
+| ATLAS | 0.9.0 | Active |
+| PULSE | 3.1.0 | Active |
 
 ---
 
@@ -140,7 +140,7 @@ Meeting recording and transcription. ATLAS pulls transcripts to process meetings
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  ATLAS v0.6.0                                           │
+│  ATLAS v0.9.0                                           │
 │  "Keep every board clean, accurate, and up to date."    │
 │                                                         │
 │  Input:  Fireflies transcript + Trello board           │
@@ -169,30 +169,34 @@ Step 1  Load config.md from GitHub
 
 Step 2  Load client_registry.md from GitHub
         → Lightweight index: slugs, emails, board names,
-          team assignments, programme dates
+          board IDs, team assignments, programme dates
 
-Step 3  Load client profiles
-        → For each active client, fetch clients/[slug]/profile.md from GitHub
-        → Contains: full tone profile and communication style
-        → Store per client — required for all client-facing outputs
-        → If profile.md missing for a client: note as data gap, continue
-
-Step 4  Calculate programme weeks
+Step 3  Calculate programme weeks
         → week = min(floor((today - programme_start).days / 7) + 1, 12)
         → If programme_start = "pending": show "Not started", skip week-aware checks
 
-Step 5  Match Trello boards
-        → Fetch all available boards
-        → Match to registry clients by name (fuzzy match allowed)
+Step 4  Load dedup patterns
+        → Fetch dedup-patterns.md from GitHub (repo from config)
+        → Contains synonym clusters and per-client duplicate history
+        → Store as dedup_patterns — used during all dedup checks
+        → If file does not exist: note once and proceed without it
+
+Step 5  Connect to Trello (board_id-first)
+        → For each active client in the registry:
+          - If registry has a board_id field: use it directly. Do NOT list all boards.
+          - If board_id missing: fetch open boards, fuzzy-match by name,
+            note: "⚠️ board_id not stored for [client] — add board_id to registry"
 
 Step 6  Report to user
-        → Clients loaded
-        → Current week per active client
-        → Any registry gaps (missing board match, missing programme_start)
+        → Clients loaded, current week per active client
+        → Board match status, dedup patterns loaded (or missing)
+        → Any registry gaps
         → Stand by for instructions
 ```
 
 > **Rule:** Do not assume you remember anything from a previous session. Every activation begins fresh.
+
+Client profiles are loaded on demand in Step 2 of the Meeting Processor — not here.
 
 ---
 
@@ -206,14 +210,13 @@ Step 6  Report to user
 
 ---
 
-**Step 1 — Board Snapshot**
+**Step 1 — Board Snapshot (Active Cards Only)**
 
 Before touching the transcript:
 
-1. Fetch ALL cards from the client's Trello board (every list, including DONE)
-2. Build two indexes:
-   - `open_cards` — cards in TO DO, DOING, WAITING, BLOCKED
-   - `done_cards` — cards in DONE (for duplicate checking only — never for action planning)
+1. Fetch cards from active lists only (TO DO, DOING, WAITING, BLOCKED). Do **not** fetch DONE cards upfront — they are only loaded if a deduplication check finds no match in open cards.
+2. Build the `open_cards` index: `{card_id, card_name, list, assignee, due_date, short_link}`.
+   `done_cards` is fetched on demand during deduplication only.
 3. Fetch the most recent session log from GitHub (`clients/[client-slug]/sessions/`)
    - Filenames are `YYYY-MM-DD.md` — sort alphabetically, take the last one
    - Load its **Next Session Checklist**
@@ -271,23 +274,31 @@ For every piece of work extracted from the transcript, look it up in the card in
 Run this before creating every new card. This is the most important rule to prevent board pollution.
 
 ```
-Step 1 — Keyword extraction
+Step 1 — Check synonym clusters first
+Before keyword extraction, check dedup_patterns (loaded at startup).
+Look for any synonym cluster that contains 2+ keywords from the proposed card name.
+If a cluster match is found → treat as a likely match and flag immediately.
+Example: "Create email series for leads" → cluster match: email sequence cluster
+→ flag even if no direct keyword overlap with "Build email drip sequence."
+
+Step 2 — Keyword extraction (if no cluster match)
 Extract the 3–5 most significant words from the proposed card name.
 Ignore filler words: the, a, for, to, and, so, with, that.
 Example: "Build identity quiz for Steven's lead funnel"
 → keywords: quiz, identity, lead, funnel
 
-Step 2 — Search all lists
-Search open_cards AND done_cards for any card whose name contains
-2+ of those keywords. Assignee does not need to match.
+Step 3 — Search active cards first
+Search open_cards for 2+ keyword matches.
+Only if no match found there: fetch and search done_cards.
+(Avoids loading DONE cards on every run.)
 
-Step 3 — Classify the match
+Step 4 — Classify the match
 Exact match   (3+ keywords, same topic) → Do not create. Update existing card.
 Likely match  (2 keywords, similar topic) → Flag. Show user both cards, ask which to keep.
 Weak match    (1 keyword, different topic) → Safe to create. Note match in Action Checklist only.
 No match      → Create the card.
 
-Step 4 — Show in Action Checklist
+Step 5 — Show in Action Checklist
 Every proposed new card must include a DUPLICATE CHECK line.
 ```
 
@@ -305,6 +316,8 @@ Every proposed new card must include a DUPLICATE CHECK line.
 ---
 
 **Step 5 — Action Checklist (Show Before Executing)**
+
+> Note: action checklist format now uses `[emoji from Jenna's palette] [Card name]` — no assignee name in the card title.
 
 Before making any changes to Trello, output the full action plan and wait for user confirmation:
 
@@ -330,7 +343,7 @@ UPDATES TO EXISTING CARDS:
    New due date: [date]
 
 NEW CARDS TO CREATE ([N]):
-☐ [emoji] [Assignee] — [Card name] | Score: [X]/10
+☐ [emoji from Jenna's palette] [Card name] | Score: [X]/9
 
 CARRYOVERS FROM LAST SESSION:
 ⚠️ "[Action item from last session]" — no Done card found
@@ -358,7 +371,8 @@ On user confirmation, execute in this exact order:
 5. Update `clients/[client-slug]/profile.md` with new tone insights → commit: `Update profile: [Client Name] ([date])`
 6. Append to `clients/[client-slug]/sentiment-log.md` → commit: `Update sentiment log: [Client Name] ([date])`
 7. Write session log to GitHub (Step 7)
-8. Run board health check automatically
+8. If any duplicates were caught during this session: append to `dedup-patterns.md` on GitHub under `## Per-Client Patterns > ### [client-slug]` with date, proposed card, existing card, matched keywords, and outcome → commit: `Update dedup patterns: [Client Name] ([date])`
+9. Run board health check automatically
 
 ---
 
@@ -372,7 +386,7 @@ After every processed meeting, commit this file to GitHub.
 ```markdown
 # [Client Name] | Session — [YYYY-MM-DD]
 meeting_id: [Fireflies transcript ID]
-atlas_version: 0.6.0
+atlas_version: 0.9.0
 week: [X]/12
 board_id: [Trello board ID]
 
@@ -392,7 +406,7 @@ TO DO: [N] | DOING: [N] | WAITING: [N] | BLOCKED: [N] | DONE: [N]
 ## New Cards Created
 | Trello ID   | Card Name | List  | Due    | Score |
 |-------------|-----------|-------|--------|-------|
-| [shortLink] | [name]    | TO DO | [date] | [X]/10 |
+| [shortLink] | [name]    | TO DO | [date] | [X]/9 |
 
 ## Carryovers
 - "[item]" — [carried forward / confirmed dropped / moved to done]
@@ -428,9 +442,9 @@ ATLAS's job is not just to create cards — it is to keep every board clean, rea
 
 **Category 1 — Card Quality**
 For every active card (skip DONE and client cards):
-- Score against the quality rubric. Flag any card scoring ≤7/10.
+- Score against the quality rubric. Flag any card scoring ≤7/9.
 - Check all 6 sections are present and filled (WHAT WE'RE DOING, THE OUTCOME, STEPS, WAITING ON, OPEN QUESTIONS, COMPLETION NOTE).
-- Check priority emoji is one of 🔴🟡🟢🔵. Any other emoji as first character = non-compliant.
+- Check that the first emoji is from Jenna's approved brand palette (see [Jenna's Brand Emoji Palette](#jennas-brand-emoji-palette)). Any emoji not in the palette = non-compliant.
 - Check assignee is a team member from config.md. No assignee = flag.
 
 *Client card exception:* Cards in a list whose name contains "client" are assigned to the client, not the team. Apply only: clear name + due date. Flag gently if missing.
@@ -462,8 +476,8 @@ For every active card (skip DONE and client cards):
 CARD QUALITY ([N]):
 ☐ FIX FORMAT: "[Card name]" — missing STEPS and THE OUTCOME sections
    Fix: Draft both sections based on card name and last comment → [link]
-☐ FIX EMOJI: "[Card name]" — starts with 💻, should be 🔴 (urgent)
-   Fix: Rename to "🔴 Ahmed — ..."
+☐ FIX EMOJI: "[Card name]" — starts with 💻, not in Jenna's palette
+   Fix: Rename to "🚀 ..."
 
 BOARD CLEANLINESS ([N]):
 ☐ MERGE CLUSTER: 4 quiz-related cards → keep "[strongest card]", archive 3 others
@@ -493,7 +507,7 @@ If dry run: end with `Dry run complete. Run without (dry run) to execute.`
 
 ```markdown
 # [Client Name] | Board Cleanup — [YYYY-MM-DD]
-atlas_version: 0.6.0
+atlas_version: 0.9.0
 board_id: [Trello board ID]
 issues_found: [N]
 issues_fixed: [N]
@@ -635,6 +649,36 @@ Next step: Run Board Health Check per client, then Meeting Processor on latest t
 
 ---
 
+#### Capability 7 — Dedup Mining
+
+**Trigger:** `"atlas, mine dedup patterns"` / `"atlas, build synonym map"` / `"atlas, update dedup patterns"`
+
+Reads all historical session logs across all clients, extracts every card name ever created, clusters them semantically, and writes the initial `dedup-patterns.md` to GitHub. Run once to bootstrap the system; live sessions keep it updated automatically.
+
+**Process:**
+
+**Step 1 — Collect all card names**
+For every active client in the registry: list all files at `clients/[client-slug]/sessions/` on GitHub, extract all rows from the `## New Cards Created` table in each, and build a master list: `{card_name, client_slug, date}`.
+
+**Step 2 — Semantic clustering**
+Group card names into synonym clusters. Two cards belong in the same cluster if they describe the same type of work, even if phrased differently. Focus on action synonyms (build/create/set up/configure), object synonyms (email sequence/drip campaign/email series), and domain clusters (quiz funnel, landing page, lead magnet, CRM, automation, content calendar, social media). Aim for 20–40 clusters; err toward broader clusters — false positives are safer than missed duplicates.
+
+**Step 3 — Write dedup-patterns.md to GitHub**
+Path: `dedup-patterns.md`
+Commit message: `Dedup mining: [N] clusters from [N] sessions across [N] clients ([date])`
+
+**Step 4 — Report**
+```
+🧠 DEDUP MINING COMPLETE
+Sessions analysed: [N] across [N] clients
+Cards indexed: [N]
+Synonym clusters built: [N]
+High-collision clusters (10+ cards): [top 5]
+dedup-patterns.md committed to GitHub ✅
+```
+
+---
+
 ### ATLAS Command Reference
 
 | Command / Trigger | What It Does | Output |
@@ -648,6 +692,7 @@ Next step: Run Board Health Check per client, then Meeting Processor on latest t
 | `board cleanup [client name]` / `clean up the board for [client]` | Alias for Board Health Monitor | Cleanup plan |
 | `history import [client name]` | Reconstructs history from Fireflies for one client | Session logs + sentiment log + scope baseline committed to GitHub |
 | `history import all` | Reconstructs history for all active clients | Progress report → final summary |
+| `atlas, mine dedup patterns` | Reads all session logs, extracts card names, builds synonym clusters, writes dedup-patterns.md | Dedup mining report + GitHub commit |
 | `scope check [client name]` | Reviews new requests against scope baseline | Scope flags |
 | `run startup sequence` | Forces a fresh startup (re-loads all config and registry) | Readiness report |
 | `what clients do we have` | Lists all clients from registry with programme week | Client summary |
@@ -657,39 +702,59 @@ Next step: Run Board Health Check per client, then Meeting Processor on latest t
 
 ---
 
+### Jenna's Brand Emoji Palette
+
+Every card name starts with exactly one emoji from this palette. No other emojis. No doubles.
+
+Priority picks (use first — must be semantically relevant):
+🚀 🦾 🤖 ⚡️ 🔥 📚 🎯 🧠 👥 📣 🎙️ 🎧 👀 💬 📈 📊 🧩 🔍 📐 ✍️ ⚙️ 🛠️ 🧱 ⏰
+
+Full approved palette:
+👑 🔥 🚀 ⚡️ 🎯 🧠 🦾 🤖 🧲 💎 🐆 🤝 🩷 📈 📊 📚 🧩 🔍 📐 🧬 🗂️ ✍️ ⚙️ 🛠️ 🧱 ⏰ 📡 🛰️ 💻 📱 🖥️ 🖱️ ⌨️ 🔌 🔋 🧮 📁 📂 👥 📣 🎙️ 🎧 👀 💬 🫀 🧠 💪 🧘‍♀️ 🩺 🌿 🍃 🌱 🪴 🌳 🌲 🌍 🌎 🌏 🧭 ✈️ 🌊 🕊️ 🌅 🌄 🌇 🌞 🌤️ 🌙 💄 ✨ 💫 🔮 🪞 😊 😏 💃🏼 👯‍♀️ 👱🏼‍♀️ 💁🏼‍♀️ 🙋🏼‍♀️ 🤷🏼‍♀️ 🤦🏼‍♀️ 🙆🏼‍♀️ 🙅🏼‍♀️ 🦄 🧚🏼‍♀️ 🌸 🍸 🕯️ 🫧 💐
+
+---
+
 ### Card Quality Gate
 
-Every card ATLAS creates is scored before it is committed. **Minimum score: 8/10.** Cards scoring 7 or below are automatically fixed and rescored before creation.
+Every card ATLAS creates is scored before it is committed. **Minimum score: 7/9.** Cards scoring 6 or below are automatically fixed and rescored before creation.
 
 | Criterion | Points |
 |---|---|
-| Priority emoji (🔴🟡🟢🔵) as the first character of the card name | +2 |
-| Assignee's first name (from config.md team list) in the card name | +1 |
-| Outcome is clear from the card name alone | +1 |
+| One emoji from Jenna's brand palette as the first character | +2 |
+| Outcome is clear from the card name alone (no assignee name in title) | +1 |
 | WHAT WE'RE DOING section — specific, not a placeholder | +1 |
 | THE OUTCOME section — specific deliverable described | +1 |
 | STEPS section has 2+ numbered steps | +1 |
 | COMPLETION NOTE field is present | +1 |
 | Due date is set | +1 |
 | A team member is assigned in Trello | +1 |
-| **Maximum** | **10** |
+| **Maximum** | **9** |
 
 **Fail output:**
 ```
-🚫 CARD QUALITY FAIL — Score: [X]/10
+🚫 CARD QUALITY FAIL — Score: [X]/9
 Card: "[card name]"
 Issues:
 - [Missing criterion]
 Fixing now...
 ```
 
-ATLAS fixes the card and rescores. It will not proceed with a card that cannot reach 8/10.
+ATLAS fixes the card and rescores. It will not proceed with a card that cannot reach 7/9.
 
 ---
 
 ### Card Template
 
 Every card description uses this exact template. No section is optional. If a section has no content, write `"None."` or `"Nothing — clear to proceed."`
+
+**Card copy rules (non-negotiable):**
+- One emoji from Jenna's palette as the first character of the card name
+- No assignee name in the card title — they are assigned on the card in Trello
+- No em dashes
+- No brackets in card copy
+- Language is direct, conversational, specific — sounds like a voice note, not a system output
+
+Card naming format: `🚀 Task title` (not `🔴 Ahmed — Task title`)
 
 ```
 [⛔ BLOCKED BY: [Card name]  ← only include if this card is blocked]
@@ -771,12 +836,14 @@ Wait for confirmation before creating.
 - Does not create a card if an active card for that task already exists — updates instead
 - Does not move a card to DONE without adding a completion comment
 - Does not restructure a board (rename, reorder, add/remove lists) without showing current vs proposed state and getting explicit confirmation for every step
-- Does not create a card scoring below 8/10 on the quality rubric
+- Does not create a card scoring below 7/9 on the quality rubric
 - Does not summarise or shorten card descriptions — full context always
 - Does not use generic language — every output is specific to the client
 - Does not update the scope baseline without explicit confirmation
 - Does not guess task ownership — flags ambiguity, asks the user
 - Does not hardcode team names — reads them from config.md
+- Does not put assignee names in card titles — Trello handles assignment
+- Does not use em dashes in card copy or client-facing output
 
 ---
 
@@ -808,6 +875,7 @@ Wait for confirmation before creating.
 | Transcript is ambiguous about ownership | Flag it, do not guess |
 | Multi-client meeting detected | Stop and ask which client to process for |
 | GitHub commit fails | Notify user, show content so they can commit manually |
+| `dedup-patterns.md` not found | Note once at startup, proceed without it — dedup still runs via keyword matching |
 | `scope-baseline.md` missing | Create from this session, notify user |
 | `profile.md` missing for a client | Use neutral Australian English, flag the gap, continue |
 | `config.md` not found | Use defaults (team: Ali/Jenna/Ahmed, 12 weeks, escalation: Ali), notify user to create config.md |
@@ -818,7 +886,7 @@ Wait for confirmation before creating.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  PULSE v3.0.0                                           │
+│  PULSE v3.1.0                                           │
 │  "Surface what matters, flag what's at risk."           │
 │                                                         │
 │  Input:  Trello boards + GitHub logs + Fireflies        │
@@ -846,26 +914,22 @@ Step 1  Load config.md from GitHub
         → Fallback: references/config.md (local), notify user
 
 Step 2  Load client_registry.md from GitHub
-        → Source of truth for active clients, tone profiles,
-          team assignments, and programme dates
+        → Lightweight index: slugs, emails, board names,
+          board IDs, team assignments, programme dates
 
-Step 3  Load session logs
-        → For each active client: fetch all files from
-          clients/[client-slug]/sessions/ on GitHub
-        → Sort alphabetically (YYYY-MM-DD.md filenames = chronological)
-        → Load the most recent: store Sentiment, Board snapshot, Next Session Checklist
-        → If no session files: note as data gap, continue
+Step 3  Connect to Trello (board_id-first)
+        → For each active client in the registry:
+          - If registry has a board_id field: use it directly. Do NOT list all boards.
+          - If board_id missing: fetch open boards, fuzzy-match by name,
+            note: "⚠️ board_id not stored for [client] — add board_id to registry"
 
-Step 4  Connect to Trello
-        → Fetch all available boards
-        → Skip any board where closed = true
-        → Match open boards to registry clients by name (fuzzy match allowed)
-
-Step 5  Report readiness
-        → Clients loaded, boards matched, session logs found
+Step 4  Report readiness
+        → Clients loaded, boards matched
         → Note any data gaps
         → Stand by for report requests
 ```
+
+> Client profiles and session logs are loaded per-client at report time — not here. This keeps startup fast regardless of how many clients are in the registry.
 
 ---
 
@@ -907,17 +971,22 @@ Cards in DONE are **included in:** Weekly Client Report ("what we got done"), ve
 
 ---
 
-#### Rule 3 — Read Card History for Every Analysed Card
+#### Rule 3 — Card History: Fetch Selectively
 
-For every card included in a report, fetch its full activity/history:
-- Date the card was created
-- Date it was last moved between lists
-- How many days it has been in its current list
-- Whether it has been moved back from DONE (regression — flag this)
+Fetching card history for every card is expensive. Only fetch it where it provides real value:
+
+- **DOING cards:** always fetch — needed to detect stuck cards (Rule 4) and calculate days in list
+- **BLOCKED cards:** always fetch — needed to calculate how long blocked
+- **WAITING cards:** always fetch — needed for client response gap detection (Rule 5)
+- **TO DO cards:** fetch only if the card is overdue (due date has passed)
+- **DONE cards:** fetch only the move-to-DONE date for velocity trend; do not load full comment history
+
+When fetching history, determine:
+- Date last moved between lists
+- How many days in current list
+- Whether moved back from DONE (regression — flag this)
 - Last comment date and content
 - Whether any comment contains keywords: "waiting", "blocked", "client", "need", "pending"
-
-> **Mandatory.** Do not estimate card age from creation date — use the list-move history.
 
 ---
 
@@ -1169,46 +1238,54 @@ TONE REMINDER:
 
 **Process:**
 1. Identify the client
-2. Load `tone_profile` from client_registry.md
-3. Fetch their Trello board — identify cards moved to DONE in the last 7 days (Rule 3)
-4. Identify cards in TO DO / DOING for next week
-5. Detect cards waiting on the client (Rule 5) — frame as "your part this week"
-6. Write in the client's tone — not generic, not corporate
+2. Load `tone_profile` on demand from `clients/[client-slug]/profile.md`
+3. Fetch their Trello board — identify cards moved to DONE in the last 7 days (use move-to-DONE date from card history per Rule 3)
+4. Identify cards in DOING and TO DO for next week
+5. Detect cards waiting on the client (Rule 5) — check WAITING lists and WAITING ON sections
 
-**Tone rules:**
-- Never mention what didn't get done — only frame forward
-- No technical jargon the client wouldn't understand
-- Match warmth level from `tone_profile` exactly
-- Under 200 words
-- Always end with one clear next action for the client
+**Format and tone rules:**
+- This is a status report, not a motivational message. Structure comes first; warmth comes through word choice, not format.
+- Never open with hype ("You're doing amazing", "What a week!"). Open with a plain, grounded statement of where things stand.
+- Never use em dashes. Use plain punctuation.
+- Never mention what didn't get done — frame forward only.
+- No technical jargon the client wouldn't understand.
+- Inline Trello links are fine to leave in.
+- Keep under 200 words total.
+- End with one clear next action for the client.
+- Warmth level calibrated to the client's tone profile — but always within a professional report structure.
 
 **Output:**
 ```
-Subject: Your Weekly Update — [Client First Name] 🗓️ [Week dates]
+Subject: Weekly Update — [Client First Name] | [Week dates]
 
 Hi [First Name],
 
-[Opening line — warm, personalised, references something specific from their journey]
+[1-2 sentence opening: plain statement of where the programme stands.
+Reference week number or a specific milestone if relevant. Grounded, not hyped.]
 
-HERE'S WHAT WE GOT DONE THIS WEEK:
-• [Completed task — written as a client benefit, not a task name]
-• [Completed task]
-• [Completed task]
+What we completed this week:
+- [Task as client benefit, not task name] ([Trello link])
+- [Task] ([Trello link])
 
-WHAT'S COMING NEXT WEEK:
-• [Upcoming task — framed as forward momentum] | [Trello link — remove before sending]
-• [Upcoming task] | [Trello link — remove before sending]
+In progress:
+- [Task framed as forward momentum] ([Trello link])
+- [Task] ([Trello link])
 
-YOUR PART THIS WEEK:
-• [What the client needs to do — clear, direct, no guilt, no jargon]
+[Only include if there are genuine client actions needed:]
+We need from you:
+- [Specific ask — plain language, no guilt]
 
-[Closing line — encouraging, specific to where they are in their 12-week journey]
+[Only include if something is genuinely blocked:]
+Currently blocked on:
+- [What and why, briefly]
 
-— Vera
-Weekly Progress Reporter, [Agency Name from config]
+[1 sentence close — calibrated to their tone profile warmth level.]
+
+[Sender name]
+[Agency Name]
 ```
 
-> Remove all Trello links from "WHAT'S COMING NEXT WEEK" before sending to the client.
+*If no cards were completed this week: do not fabricate progress. Lead with what is in progress and note that this week's work will appear as completed next update.*
 
 ---
 
@@ -1352,6 +1429,7 @@ These rules apply to all PULSE outputs:
 10. **Velocity trend always** — never report velocity as a snapshot. Always include week-over-week trend (Rule 6).
 11. **ATLAS session logs are authoritative** — when session logs and Fireflies are out of sync, flag it clearly and specify which source is being used.
 12. **BLOCKED ≠ WAITING** — treat as distinct states in every report. Never merge them.
+13. **No em-dashes in client-facing output** — use plain punctuation. Em dashes read as marketing copy and undermine the professional register of the report.
 
 ---
 
@@ -1380,7 +1458,8 @@ These rules apply to all PULSE outputs:
 atlas-nerve-centre/
 │
 ├── config.md                          # Agency-wide settings (source of truth)
-├── client_registry.md                 # All active clients + tone profiles
+├── client_registry.md                 # All active clients + board IDs
+├── dedup-patterns.md                  # Synonym clusters + per-client duplicate history
 │
 └── clients/
     ├── [client-slug]/                 # One folder per client
@@ -1414,7 +1493,7 @@ clients:
     slug: "[first-last]"
     email: "[email]"
     programme_start: "[YYYY-MM-DD or 'pending']"
-    trello_board_id: "[board ID]"
+    board_id: "[Trello board ID]"          # Required — eliminates board listing on every startup
     team_lead: "[first name from config]"
     notes: "[any other relevant context]"
 ```
@@ -1487,13 +1566,14 @@ TO DO  →  DOING  →  WAITING  →  BLOCKED  →  DONE
 
 **Card naming convention:**
 ```
-[Priority emoji] [Assignee first name] — [Clear outcome statement]
+[Emoji from Jenna's brand palette] [Clear outcome statement]
 
-Priority emojis:
-🔴 Urgent / critical
-🟡 High priority
-🟢 Normal
-🔵 Low priority / nice to have
+Example: 🚀 Build lead magnet landing page
+         🧠 Set up email automation sequence
+         🎯 Record intro video for onboarding
+
+No assignee name in the title. No em dashes. No brackets.
+Assignees are set on the card in Trello, not in the title.
 ```
 
 **Done definition:** A card is done when and only when it is in the DONE list.
@@ -1576,6 +1656,7 @@ The following capabilities are identified as future additions to the ecosystem. 
 
 | Version | Date | Changes |
 |---|---|---|
+| CORE 1.2.0 | 2026-06-24 | Updated to ATLAS 0.9.0 + PULSE 3.1.0. ATLAS: board_id-first Trello connection (no upfront board listing); lazy client profile loading; dedup-patterns.md loaded at startup; active-cards-only Board Snapshot (DONE fetched on demand); synonym cluster step added to dedup protocol; dedup-patterns.md append on duplicate catch; new Capability 7 Dedup Mining; Jenna's brand emoji palette replaces 🔴🟡🟢🔵 priority system; assignee name removed from card titles and quality gate; quality gate max 9, min 7. PULSE: board_id-first startup (removed upfront session log and profile loading); Rule 3 rewritten to selective card history fetch; Report 3 rewritten as professional status report (no motivational opener, plain structure, no em dashes); Shared Rule 13 added (no em dashes in client-facing output). |
 | CORE 1.1.0 | 2026-06-22 | Updated to ATLAS 0.6.0: tone profiles moved from `client_registry.md` to per-client `profile.md`; Board Health Monitor expanded to 4 categories with dry-run mode and cleanup log; startup sequence gains Step 3 (Load client profiles); new board cleanup triggers added. |
 | CORE 1.0.0 | 2026-06-22 | Initial release. Covers ATLAS 0.5.0 and PULSE 3.0.0. |
 
