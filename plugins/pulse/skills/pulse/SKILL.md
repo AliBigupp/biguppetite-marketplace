@@ -319,14 +319,16 @@ TONE REMINDER:
 
 **Tone and format rules:**
 - This is a status report, not a motivational message. Structure and clarity come first; warmth is expressed through word choice and closing, not through the format itself.
+- **Apply the Voice skill** (`anthropic-skills:voice`) for all client-facing emails. The email must sound like a specific human wrote it — direct, warm, energetic. Not robotic, not templated, not corporate. Every email should feel personally written, even when the structure is repeatable.
 - Never open with cheerleader lines ("You're doing amazing", "What a week!"). Open with a clear, grounded statement of where things stand.
 - Never use em-dashes (—) in client emails. Use plain punctuation.
 - Never mention what didn't get done — only frame forward.
 - Never use technical jargon the client wouldn't understand.
 - No bullet emojis or decorative formatting — clean, readable text.
 - Inline Trello links are fine to leave in. If the client clicks through, that's useful context. No need to label them "internal only".
-- Keep under 200 words total.
+- **Length:** Write as much as the content genuinely needs — no more, no less. Do not pad to fill space and do not cut content to hit a word count. Most emails will land between 150 and 300 words naturally. If it feels long, the content is probably right-sized; if it feels short, check that nothing important was left out.
 - End with one clear next action for the client, stated plainly.
+- Before sending, apply the Voice skill checklist: Does it sound like a specific human wrote it? Is there at least one concrete specific detail from this client's actual week? Is the ask unmistakably clear? Is the energy alive?
 
 **Output format:**
 ```
