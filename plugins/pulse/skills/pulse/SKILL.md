@@ -330,9 +330,23 @@ TONE REMINDER:
 - End with one clear next action for the client, stated plainly.
 - Before sending, apply the Voice skill checklist: Does it sound like a specific human wrote it? Is there at least one concrete specific detail from this client's actual week? Is the ask unmistakably clear? Is the energy alive?
 
+**PRE-FLIGHT — run this before writing every single email. Do not skip.**
+
+```
+[ ] Subject line has NO emoji and NO em-dash
+[ ] Opening line is a grounded statement of fact — not hype, not "what a week"
+[ ] Zero em-dashes (—) anywhere in the email body
+[ ] Section headers are lowercase plain text: "What we completed this week:" not "HERE'S WHAT WE GOT DONE:"
+[ ] "We need from you:" section exists ONLY if there are real client actions
+[ ] "Currently blocked on:" section exists ONLY if something is genuinely blocked
+[ ] Signed as Ali / Big Uppetite — never Vera, never Jenna
+[ ] Voice skill applied — reads like a human wrote it, not a system
+[ ] At least one specific detail unique to this client's week — not templatable
+```
+
 **Output format:**
 ```
-Subject: Weekly Update — [Client First Name] | [Week dates]
+Subject: Weekly Update: [Client First Name] | [Week dates]
 
 Hi [First Name],
 
