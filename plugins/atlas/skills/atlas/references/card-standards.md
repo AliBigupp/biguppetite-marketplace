@@ -18,30 +18,31 @@ Every card name must begin with a **priority emoji** — not a decorative emoji.
 ## Card Name Format
 
 ```
-[PRIORITY EMOJI] [ASSIGNEE FIRST NAME] — [Task description that makes outcome clear]
+[PRIORITY EMOJI] [Task description that makes outcome clear]
 ```
 
-- Assignee is always **first name only**: Ahmed / Ali / Jenna
-- Use an em dash (—) not a hyphen
-- The task description must make the outcome obvious — not just "write email" but "write email confirming scope so client has signed-off record"
-- Max ~80 characters
+- No assignee name in the title. The assignee lives in Trello's own member field, that's what it's for. A name prefix is redundant with the avatar already showing on the card.
+- No em dash, no hyphen, no dash of any kind anywhere in the title. Write it as a plain clause instead.
+- The task description must make the outcome obvious. Not just "write email" but "write email confirming scope so client has signed-off record".
+- Max ~80 characters.
 
 **Good examples:**
-- `🔴 Jenna — Build messaging hierarchy so every channel sounds like Steven`
-- `🟡 Ahmed — Set up GHL pipeline so leads are auto-tagged on entry`
-- `🟢 Ali — Map competitor positioning so we know where to play`
-- `🔵 Jenna — Schedule Week 6 check-in so progress is reviewed on time`
+- `🔴 Build messaging hierarchy so every channel sounds like Steven`
+- `🟡 Set up GHL pipeline so leads are auto-tagged on entry`
+- `🟢 Map competitor positioning so we know where to play`
+- `🔵 Schedule Week 6 check-in so progress is reviewed on time`
 
 **Bad examples (do not create):**
-- `Review deck` ← no emoji, no assignee, no outcome
-- `🌟 Ahmed — Write copy` ← decorative emoji, vague outcome
-- `🔴 Ahmed set up pipeline` ← no em dash, unclear outcome
+- `Review deck` ← no emoji, no outcome
+- `🌟 Write copy` ← decorative emoji, vague outcome
+- `🔴 Jenna — Build messaging hierarchy` ← name prefix and dash, both banned
+- `🔴 Ahmed - set up pipeline` ← hyphen used as a dash, unclear outcome
 
 ---
 
 ## Card Description Format
 
-Full context only — never summarise. Every card must use this exact template:
+Keep every necessary specific — due dates, exact references, what changed, why it matters operationally. Never summarise those away. That said, apply the Real but Useful Filter (see SKILL.md, Voice & Tone Layer) to cut sentences that are factually true but don't change what the reader does — judgments about a person, restated assumptions, self-evident justifications. Every card must use this exact template:
 
 ```
 WHAT WE'RE DOING
@@ -97,7 +98,7 @@ Before committing any card, score it against this rubric. **Minimum score: 8. Do
 | Criterion | Points | Pass condition |
 |-----------|--------|----------------|
 | Priority emoji (🔴🟡🟢🔵) as first character | +2 | One of the four priority emojis, nothing else |
-| Assignee first name in card name | +1 | Ahmed / Ali / Jenna present after the emoji |
+| No dash/hyphen anywhere in the title | +1 | Title reads as a plain clause, no em dash, no hyphen |
 | Outcome clear from card name alone | +1 | A stranger reading the name understands what "done" looks like |
 | WHAT WE'RE DOING section present | +1 | Not empty, not placeholder text |
 | THE OUTCOME section present | +1 | Not empty, specific deliverable described |
