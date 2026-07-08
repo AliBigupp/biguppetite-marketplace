@@ -1,7 +1,7 @@
 # CORE
 ### The Big Uppetite Automation System Reference
 
-> **Version:** 1.1.0 · **Maintained by:** Big Uppetite · **Language:** Australian English  
+> **Version:** 1.3.0 · **Maintained by:** Big Uppetite · **Language:** Australian English  
 > *This document is the canonical reference for every automation agent in the Big Uppetite ecosystem. When in doubt, start here.*
 
 ---
@@ -28,6 +28,14 @@
   - [Report Types](#report-types)
   - [Shared Rules](#pulse-shared-rules)
   - [Error Handling](#pulse-error-handling)
+- [KEEPER — Daily Commitment Digest Agent](#keeper--daily-commitment-digest-agent)
+  - [Identity & Purpose](#keeper-identity--purpose)
+  - [Execution Model](#keeper-execution-model)
+  - [What Goes In The Digest](#keeper-what-goes-in-the-digest)
+  - [Config](#keeper-config)
+  - [Naming](#keeper-naming)
+  - [Rules & Constraints](#keeper-rules--constraints)
+  - [Error Handling](#keeper-error-handling)
 - [System Infrastructure](#system-infrastructure)
   - [GitHub Repository Structure](#github-repository-structure)
   - [Client Registry Schema](#client-registry-schema)
@@ -44,23 +52,25 @@ Big Uppetite runs a 12-week client coaching programme. Every client has a Trello
 
 **The problem before automation:** After every client meeting, someone had to manually review the transcript, update cards on the Trello board, write a session summary, flag scope creep, track sentiment, and draft a client-facing update. Across multiple concurrent clients, this was unsustainable.
 
-**What the system does:** Two specialised agents — ATLAS and PULSE — divide that work cleanly. ATLAS handles everything that changes data (processing meetings, updating boards, committing logs). PULSE handles everything that reads data (surfacing risk, generating reports, briefing the team). Together they cover the full client management cycle.
+**What the system does:** Three specialised agents — ATLAS, PULSE, and KEEPER — divide that work cleanly. ATLAS handles everything that changes data (processing meetings, updating boards, committing logs). PULSE handles everything that reads data (surfacing risk, generating reports, briefing the team). KEEPER handles the unattended schedule: every night it scans Trello for what's due today and puts it straight onto the calendar, so nobody has to remember to check the board. Together they cover the full client management cycle.
 
 ```
-                    ┌─────────────────────────────────────┐
-                    │         BIG UPPETITE ECOSYSTEM       │
-                    │                                      │
-   Fireflies ──────►│  ATLAS              PULSE            │──► Trello
-   Transcripts      │  (Write Agent)      (Read Agent)     │    Updates
-                    │                                      │
-   GitHub  ◄────────│  Session Logs       Reports          │──► Team
-   Nerve Centre     │  Scope Baselines    Risk Flags       │    Briefings
-                    │  Sentiment Logs     Client Updates   │
-                    │                                      │
-   Config.md ──────►│  Shared Source of Truth              │
-   Registry ────────│  (GitHub: AliBigupp/atlas-nerve-centre)│
-                    └─────────────────────────────────────┘
+                    ┌───────────────────────────────────────────────┐
+                    │            BIG UPPETITE ECOSYSTEM              │
+                    │                                                │
+   Fireflies ──────►│  ATLAS              PULSE           KEEPER     │──► Trello
+   Transcripts      │  (Write Agent)      (Read Agent)    (Schedule  │    Updates
+                    │                                       Agent)   │──► Calendar
+   GitHub  ◄────────│  Session Logs       Reports          Digest    │    Digests
+   Nerve Centre     │  Scope Baselines    Risk Flags       Events    │──► Team
+                    │  Sentiment Logs     Client Updates             │    Briefings
+                    │                                                │
+   Config.md ──────►│  Shared Source of Truth                       │
+   Registry ────────│  (GitHub: AliBigupp/atlas-nerve-centre)        │
+                    └───────────────────────────────────────────────┘
 ```
+
+KEEPER runs on its own nightly schedule, independent of the meeting-driven flow above — see [Execution Model](#keeper-execution-model).
 
 **Design principles:**
 - **Single source of truth** — every agent reads from the same GitHub repository. No agent has private knowledge.
@@ -68,6 +78,7 @@ Big Uppetite runs a 12-week client coaching programme. Every client has a Trello
 - **Show before execute** — ATLAS never changes data without presenting a plan and receiving confirmation first.
 - **Graceful degradation** — when data is missing, agents work with what they have and note gaps once. They never block on missing data or surface raw errors.
 - **Config-driven** — team membership, programme duration, board structure, and escalation contacts all live in `config.md`. No agent hardcodes business logic.
+- **Read/write boundaries are absolute** — ATLAS is the only agent that writes to Trello. PULSE and KEEPER are read-only on Trello, full stop. KEEPER's only write, anywhere, is its own calendar digest event.
 
 ---
 
@@ -77,8 +88,9 @@ Big Uppetite runs a 12-week client coaching programme. Every client has a Trello
 
 | Agent | Role | Writes? | Reads? | Primary Data Sources |
 |---|---|---|---|---|
-| **ATLAS** | Project intelligence engine | ✅ Yes | ✅ Yes | Fireflies, Trello, GitHub |
+| **ATLAS** | Project intelligence engine | ✅ Yes (Trello) | ✅ Yes | Fireflies, Trello, GitHub |
 | **PULSE** | Business intelligence reporter | ❌ No | ✅ Yes | Trello, GitHub (profile.md, session logs), Fireflies |
+| **KEEPER** | Daily commitment digest scheduler | ❌ Trello · ✅ Calendar only | ✅ Yes | Trello (read-only), GitHub (config.md), Google Calendar |
 
 ### Data Flow
 
@@ -101,38 +113,59 @@ PULSE reads outputs ──► Daily Focus for team
                     ──► Team Blockers (internal operations)
 ```
 
+KEEPER does not sit in this pipeline — it runs on its own clock, once a night, for every active person in its calendar mapping:
+
+```
+SCHEDULED TRIGGER (GitHub Actions cron, unattended)
+      │
+      ▼
+KEEPER resolves "today" in the person's local timezone (zoneinfo, DST-safe)
+      │
+      ▼
+Reads that person's Trello cards (read-only) ──► due today + TO DO/DOING + assigned to them?
+      │
+      ▼
+Zero matches → do nothing          One or more matches → upsert one Google Calendar event
+                                    (create if none exists for today, update in place if one does)
+```
+
 ### Version Matrix
 
 | Agent | Current Version | Status |
 |---|---|---|
 | ATLAS | 0.9.0 | Active |
 | PULSE | 3.1.0 | Active |
+| KEEPER | 1.0.0 | Active (Jenna only — schema supports Ahmed/Ali as a config-only addition) |
 
 ---
 
 ## Shared Infrastructure
 
-Both agents rely on the same three infrastructure components. These must exist and be accessible for either agent to function.
+All three agents rely on the same GitHub repo and the same Trello board conventions — no agent has private knowledge or invents its own rules for what a list name or a "done" card means. KEEPER additionally depends on Google Calendar, which is exclusive to it; ATLAS and PULSE never touch it, and KEEPER never touches Fireflies.
 
 ### 1. GitHub: `AliBigupp/atlas-nerve-centre`
 
-The central repository. Every agent reads from and writes to this repo. It is the canonical source of truth for all client data.
+The central repository. ATLAS and PULSE read from and write to this repo. KEEPER **reads only** — team roster and canonical board structure from `config.md` — and never writes here; KEEPER's own config lives in its own repo (see [KEEPER Config](#keeper-config)).
 
 **Key files:**
-- `config.md` — agency-wide settings (team, programme structure, escalation)
-- `client_registry.md` — all active clients, programme dates, board assignments
-- `clients/[client-slug]/profile.md` — full tone profile and communication style (per client)
+- `config.md` — agency-wide settings (team, programme structure, escalation) — read by all three agents
+- `client_registry.md` — all active clients, programme dates, board assignments — ATLAS/PULSE only
+- `clients/[client-slug]/profile.md` — full tone profile and communication style (per client) — ATLAS/PULSE only
 - `clients/[client-slug]/sessions/[YYYY-MM-DD].md` — ATLAS session logs
 - `clients/[client-slug]/sentiment-log.md` — running sentiment history
 - `clients/[client-slug]/scope-baseline.md` — agreed deliverables and scope
 
 ### 2. Trello
 
-One board per client. The canonical board structure (list names) is defined in `config.md`. Both agents normalise list names to five canonical states — see [Trello Board Standards](#trello-board-standards).
+One board per client. The canonical board structure (list names) is defined in `config.md`. All three agents normalise list names to the same five canonical states — see [Trello Board Standards](#trello-board-standards). ATLAS is the only one of the three permitted to write to a card; PULSE and KEEPER are read-only.
 
 ### 3. Fireflies
 
-Meeting recording and transcription. ATLAS pulls transcripts to process meetings. PULSE checks Fireflies to detect unprocessed meetings and calculate last-contact dates.
+Meeting recording and transcription. ATLAS pulls transcripts to process meetings. PULSE checks Fireflies to detect unprocessed meetings and calculate last-contact dates. KEEPER does not use Fireflies at all — it has no meeting-processing role.
+
+### 4. Google Calendar (KEEPER only)
+
+The destination for KEEPER's one and only write. Each active person in KEEPER's calendar mapping gets a single daily digest event on their own calendar, written via a Google Workspace service account with domain-wide delegation. Neither ATLAS nor PULSE reads or writes here.
 
 ---
 
@@ -1448,6 +1481,130 @@ These rules apply to all PULSE outputs:
 
 ---
 
+## KEEPER — Daily Commitment Digest Agent
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  KEEPER v1.0.0                                           │
+│  "What you committed to, already on your calendar."      │
+│                                                           │
+│  Input:  Trello cards due today (read-only)              │
+│  Output: One digest event on the person's calendar       │
+└─────────────────────────────────────────────────────────┘
+```
+
+### KEEPER Identity & Purpose
+
+KEEPER closes the gap between what someone committed to on Trello and what actually shows up on their calendar. Once a day, while the person is asleep, it scans Trello for cards due that day and writes a single digest event to that person's Google Calendar, so the day's commitments are already sitting in the calendar when they wake up.
+
+KEEPER exists because a human remembering to check the board every morning defeats the purpose of having a board. It runs on a schedule with no human trigger, and it does exactly one job: read what's due, write one calendar event. It does not process meetings, does not manage the board, and does not generate reports — those are ATLAS's and PULSE's jobs respectively.
+
+KEEPER shares ATLAS and PULSE's board-reading conventions exactly — same Done definition (list position only), same five canonical list states, same `config.md` team roster — so it never reads a board differently from the rest of CORE. It is a fourth consumer of the same source of truth, not a fork of it.
+
+---
+
+### KEEPER Execution Model
+
+**Deployment:** a GitHub Actions scheduled workflow in its own repository, [`AliBigupp/keeper`](https://github.com/AliBigupp/keeper) — separate from `atlas-nerve-centre`, since KEEPER needs its own GitHub Actions secrets and its own unattended run history. The workflow file lives at `.github/workflows/keeper.yml` and also supports `workflow_dispatch` for manual test runs.
+
+**Schedule:** targets 3:00–4:00am in each person's local timezone (currently only `Australia/Sydney`, via Jenna). GitHub cron is UTC-only and cannot express a timezone directly, and no single fixed UTC hour lands inside that window in both AEST and AEDT — the workflow fires at a UTC time chosen to land inside or just before the window across both DST states, erring early rather than late. The actual "today" and event time are always resolved from real local wall-clock time inside the script using a proper IANA timezone database (`zoneinfo`), never a hardcoded UTC offset — so Sydney's twice-yearly DST shift is handled automatically.
+
+**Idempotency:** running twice in the same day for the same person never creates a second event. Each digest event carries a stable hidden marker (`extendedProperties.private`: `keeper_digest=v1` + `keeper_digest_date=YYYY-MM-DD`) that KEEPER searches for before deciding to create or update — never matched by title text alone.
+
+**Multi-person by design:** the run is a loop over every active person in KEEPER's calendar mapping. A single-person run (today: Jenna only) is just a loop of length one. There is no special-cased "Jenna" path anywhere in the code — adding Ahmed or Ali later is a config-only change (see [KEEPER Config](#keeper-config)).
+
+---
+
+### KEEPER What Goes In The Digest
+
+A Trello card belongs in the digest only if **all** of the following hold:
+
+- Due date = today, in the person's local timezone (not UTC — a card due at midnight UTC can already be "tomorrow" or "today" locally depending on the person's offset)
+- It sits in a **TO DO or DOING** list (normalised per the same five-state convention PULSE uses — see [Trello Board Standards](#trello-board-standards))
+- It is assigned to that person (matched on first name, same convention as the rest of CORE)
+
+**Done = list position only**, exactly as ATLAS and PULSE define it — `dueComplete` and checklist completion are never consulted. A card due today that's already sitting in DONE is excluded, full stop.
+
+**WAITING and BLOCKED cards due today are not actionable** and are never mixed into the action list — KEEPER surfaces them only as a short separate count (e.g. "⏳ Waiting/blocked and due today: 2 — see board").
+
+**Zero matching cards → KEEPER does nothing.** No empty event is ever created.
+
+**When one or more cards match**, KEEPER creates or updates exactly one event:
+- **Title:** `Harry Digest` (see [Naming](#keeper-naming))
+- **Description:** opens with "Better to get to these today:", then per card the direct Trello link plus one short plain-language line describing it (derived from the card name and, where present, the ATLAS card template's THE OUTCOME section — never a raw dump of the card). Lists at most N items individually (N is per-person configurable, default 6); beyond N, lists the top N by priority label (🔴 urgent first) and adds a "+X more on the board" link so the description never becomes a wall of text.
+- **Time slot:** a best-effort open-slot search within the person's working hours, falling back to their configured default time if the check fails or finds no gap — a known simplification, not a full scheduling engine.
+
+---
+
+### KEEPER Config
+
+KEEPER reads `config.md` from `AliBigupp/atlas-nerve-centre` for exactly two things — the team roster (first names + Trello member IDs) and the canonical board structure — the same source ATLAS and PULSE use. It never defines its own board structure and never writes to that repo.
+
+The **only** KEEPER-specific config is the per-person calendar mapping, which lives in KEEPER's own repo at `config/people.yaml`:
+
+```yaml
+people:
+  - key: jenna
+    first_name: Jenna          # must match config.md's team roster
+    active: true
+    calendar_id: "hello@biguppetite.com"
+    timezone: "Australia/Sydney"
+    event_time_slot: "07:00"   # fallback default if free-slot search finds nothing
+    max_items: 6                # cap on individually-listed cards before "+N more"
+```
+
+No person's name, email, calendar ID, or timezone is ever hardcoded in KEEPER's logic — every one of those values is read from this file. Only Jenna is active today; adding Ahmed or Ali is a new entry in this file, nothing else.
+
+---
+
+### KEEPER Naming
+
+The engine is `keeper` everywhere — repo, files, variables, logs, config keys. **"Harry" is a display name only**, and appears in exactly two places, neither of them in logic:
+
+1. The Trello account profile that provides KEEPER's API credentials (a dedicated Trello identity, set up separately — handled entirely by that account's own identity, not by anything in KEEPER's code)
+2. The calendar event title, `Harry Digest`
+
+"Harry" never appears in a filename, a variable name, a config key, or a log line.
+
+---
+
+### KEEPER Rules & Constraints
+
+#### Read-Only on Trello
+
+KEEPER never creates, edits, moves, or comments on a Trello card. Writing to Trello is exclusively ATLAS's job. The only thing KEEPER writes, anywhere, is the one digest event on a person's own calendar.
+
+#### Not a Meeting Organiser
+
+KEEPER does not send calendar invites to other attendees. It writes a personal digest event to one person's own calendar — nothing more. It is not a substitute for a real meeting invite system.
+
+#### No Reports, No Health Scores
+
+KEEPER does not generate reports or health scores — that is PULSE's job. It has exactly one output: the daily digest event.
+
+#### What KEEPER Does Not Do
+
+- Does not touch Trello beyond reading — no card writes of any kind
+- Does not create an empty calendar event when there's nothing due
+- Does not create a duplicate event on re-run — always searches by the stable marker first
+- Does not hardcode any person's name, email, calendar ID, or timezone
+- Does not use `dueComplete` or checklist state to decide what's done — list position only
+- Does not mix WAITING/BLOCKED cards into the actionable list
+
+---
+
+### KEEPER Error Handling
+
+| Error | Response |
+|---|---|
+| Trello API failure for a person | Log and skip that person's run for the day; does not crash the whole batch |
+| Calendar API failure for a person | Log and continue to the next person |
+| A person has no working calendar permissions | Surface it once per week (persisted via a small state file), not silently every day and not noisily every day |
+| `config.md` unreachable | Log and stop that run — KEEPER has no safe default team roster to fall back to |
+| Free-slot search fails or finds no gap | Fall back to the person's configured default time slot; not a full scheduling engine |
+
+---
+
 ## System Infrastructure
 
 ### GitHub Repository Structure
@@ -1480,6 +1637,19 @@ atlas-nerve-centre/
 **File naming rules:**
 - Session logs: `YYYY-MM-DD.md` (ISO 8601, zero-padded). Alphabetical sort = chronological order.
 - Commit messages follow a consistent pattern: `[Action]: [Client Name] ([date])` — e.g. `Session log: Abbi Costa (2026-06-18)`.
+
+**KEEPER's repository is separate:** `AliBigupp/keeper` (branch: `main`). It reads `config.md` from `atlas-nerve-centre` above but never writes there, and never stores client data of its own — it has none. Its own repo holds only its code, its GitHub Actions workflow, and its per-person calendar mapping:
+
+```
+keeper/
+│
+├── .github/workflows/keeper.yml       # Scheduled + workflow_dispatch entry point
+├── config/people.yaml                 # KEEPER-only: per-person calendar mapping
+├── src/keeper/                        # Engine — timezone resolution, list normalisation,
+│                                       # Trello client (read-only), digest logic, Calendar client
+├── state/alert_state.json             # Weekly-throttled permission-alert bookkeeping
+└── tests/                             # Unit tests — no live credentials required
+```
 
 ---
 
@@ -1656,6 +1826,7 @@ The following capabilities are identified as future additions to the ecosystem. 
 
 | Version | Date | Changes |
 |---|---|---|
+| CORE 1.3.0 | 2026-07-08 | Added KEEPER 1.0.0 as the third arm of CORE — daily commitment digest agent. Reads Trello (read-only, same list-normalisation and Done-is-list-position rules as PULSE) and `config.md` team roster from `atlas-nerve-centre`; writes exactly one digest event per active person per day to Google Calendar via a domain-wide-delegated service account, matched idempotently by a hidden extendedProperties marker. Runs unattended on its own GitHub Actions schedule in its own repo (`AliBigupp/keeper`), targeting 3–4am in the person's local timezone via `zoneinfo` (DST-safe, no hardcoded UTC offset). Config-driven multi-person support from day one (only Jenna active; Ahmed/Ali are a config-only addition). "Harry" is a display name only — Trello account profile + calendar event title, never in code. Updated: System Overview, Architecture (Agent Roles, Data Flow, Version Matrix), Shared Infrastructure (added Google Calendar as component 4), System Infrastructure (KEEPER's separate repo layout). |
 | CORE 1.2.0 | 2026-06-24 | Updated to ATLAS 0.9.0 + PULSE 3.1.0. ATLAS: board_id-first Trello connection (no upfront board listing); lazy client profile loading; dedup-patterns.md loaded at startup; active-cards-only Board Snapshot (DONE fetched on demand); synonym cluster step added to dedup protocol; dedup-patterns.md append on duplicate catch; new Capability 7 Dedup Mining; Jenna's brand emoji palette replaces 🔴🟡🟢🔵 priority system; assignee name removed from card titles and quality gate; quality gate max 9, min 7. PULSE: board_id-first startup (removed upfront session log and profile loading); Rule 3 rewritten to selective card history fetch; Report 3 rewritten as professional status report (no motivational opener, plain structure, no em dashes); Shared Rule 13 added (no em dashes in client-facing output). |
 | CORE 1.1.0 | 2026-06-22 | Updated to ATLAS 0.6.0: tone profiles moved from `client_registry.md` to per-client `profile.md`; Board Health Monitor expanded to 4 categories with dry-run mode and cleanup log; startup sequence gains Step 3 (Load client profiles); new board cleanup triggers added. |
 | CORE 1.0.0 | 2026-06-22 | Initial release. Covers ATLAS 0.5.0 and PULSE 3.0.0. |
@@ -1663,4 +1834,4 @@ The following capabilities are identified as future additions to the ecosystem. 
 ---
 
 *CORE is a living document. When an agent is updated, update this document in the same commit.*  
-*Repository: `AliBigupp/atlas-nerve-centre` · Maintained by Big Uppetite*
+*This document lives in `AliBigupp/biguppetite-marketplace` · Agent data repository: `AliBigupp/atlas-nerve-centre` · KEEPER repository: `AliBigupp/keeper` · Maintained by Big Uppetite*
